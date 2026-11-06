@@ -1,24 +1,20 @@
+import discord
+import os
+import re
+import asyncio
 
-const {
-    Client,
-    GatewayIntentBits,
-    PermissionsBitField
-} = require("discord.js");
+# إعداد الصلاحيات (Intents)
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
 
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
-    ]
-});
+client = discord.Client(intents=intents)
 
-// ==================================
-// الكلمات الممنوعة
-// ==================================
-
-const badWords = [
+# ==================================
+# الكلمات الممنوعة
+# ==================================
+bad_words = [
     "قحبه",
     "ازغبك",
     "امك",
@@ -39,97 +35,83 @@ const badWords = [
     "مزغوب",
     "قح.به",
     "يامفتوح"
-];
+]
 
-// ==================================
-// تنظيف النص من التشكيل والتحايل
-// ==================================
-
-function normalize(text) {
+# ==================================
+# تنظيف النص من التشكيل والتحايل
+# ==================================
+def normalize(text):
+    if not text:
+        return ""
+    # تحويل إلى أحرف صغيرة
+    text = text.lower()
+    # إزالة التشكيل والمد
+    text = re.sub(r'[\u064B-\u065F\u0670\u0640]', '', text)
+    # توحيد الألفات
+    text = re.sub(r'[أإآٱ]', 'ا', text)
+    # توحيد الياء
+    text = text.replace('ى', 'ي')
+    # إزالة أي رموز أو مسافات غير الحروف والأرقام
+    text = re.sub(r'[^\w\s]', '', text)
     return text
-        .toLowerCase()
-        .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
-        .replace(/[أإآٱ]/g, "ا")
-        .replace(/ى/g, "ي")
-        .replace(/[^\p{L}\p{N}]/gu, "");
-}
 
-const forbidden = badWords
-    .map(word => normalize(word))
-    .filter(Boolean);
+forbidden = [normalize(word) for word in bad_words if word]
 
-// ==================================
-// تشغيل البوت
-// ==================================
+# ==================================
+# تشغيل البوت
+# ==================================
+@client.event
+async def on_ready():
+    print(f'Bot is online: {client.user}')
 
-client.once("ready", () => {
-    console.log(`Bot is online: ${client.user.tag}`);
-});
+# ==================================
+# مراقبة الرسائل
+# ==================================
+@client.event
+async def on_message(message):
+    if not message.guild or message.author.bot:
+        return
 
-// ==================================
-// مراقبة الرسائل
-// ==================================
+    content = normalize(message.content)
 
-client.on("messageCreate", async (message) => {
+    found = any(word in content for word in forbidden)
 
-    if (!message.guild || message.author.bot) return;
+    if not found:
+        return
 
-    const content = normalize(message.content);
+    try:
+        # حذف رسالة العضو فوراً
+        await message.delete()
 
-    const found = forbidden.some(word =>
-        content.includes(word)
-    );
+        # Timeout لمدة 10 ثوانٍ (يحتاج صلاحيات Moderation للبوت)
+        duration = discord.utils.utcnow() + discord.timedelta(seconds=10)
+        await message.author.timeout(duration, reason="استخدام كلمة ممنوعة")
 
-    if (!found) return;
+        print(f"تم حذف رسالة ومعاقبة {message.author}")
 
-    try {
+        # الانتظار حتى انتهاء العقوبة (10 ثواني)
+        await asyncio.sleep(10)
 
-        // حذف رسالة العضو فوراً
-        await message.delete();
+        # إرسال التحذير بعد انتهاء العقوبة
+        warning = await message.channel.send(
+            content=f"⚠️ {message.author.mention} ممنوع تقول كلام بذيئ او قذف"
+        )
 
-        // Timeout لمدة 10 ثوانٍ
-        await message.member.timeout(
-            10 * 1000,
-            "استخدام كلمة ممنوعة"
-        );
+        # حذف التحذير بعد 20 ثانية
+        await asyncio.sleep(20)
+        try:
+            await warning.delete()
+        except Exception as error:
+            print("تعذر حذف التحذير:", error)
 
-        console.log(
-            `تم حذف رسالة ومعاقبة ${message.author.tag}`
-        );
+    except Exception as error:
+        print("Error:", error)
 
-        // الانتظار حتى انتهاء العقوبة
-        await new Promise(resolve =>
-            setTimeout(resolve, 10 * 1000)
-        );
+# ==================================
+جهل وتسجيل الدخول
+# ==================================
+token = os.getenv('TOKEN')
+if not token:
+    raise ValueError("TOKEN غير موجود في متغيرات البيئة!")
 
-        // إرسال التحذير بعد انتهاء العقوبة
-        const warning = await message.channel.send({
-            content: `⚠️ ${message.author} ممنوع تقول كلام بذيئ او قذف`
-        });
-
-        // حذف التحذير بعد 20 ثانية
-        setTimeout(async () => {
-            try {
-                await warning.delete();
-            } catch (error) {
-                console.error("تعذر حذف التحذير:", error);
-            }
-        }, 20 * 1000);
-
-    } catch (error) {
-
-        console.error("Error:", error);
-
-    }
-
-});
-
-// ==================================
-// تسجيل الدخول
-// ==================================
-
-if (!process.env.DISCORD_TOKEN) {
-    throw new Error("DISCORD_TOKEN غير موجود!");
-}
-
-client.login(process.env.DISCORD_TOKEN);
+client.run(token)
